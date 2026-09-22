@@ -1,32 +1,108 @@
-import { Client, Events, GatewayIntentBits } from "discord.js";
+import {
+  Client,
+  Events,
+  GatewayIntentBits,
+  MessageFlags,
+} from "discord.js";
+
+import http from "http";
+
 import { Arena } from "./arena";
 import { handleCommand } from "./commands";
 import { config } from "./config";
 import { MODE } from "./mode";
 
+const PORT = Number(process.env.PORT) || 3000;
+
+// Servidor HTTP para o Render detectar a porta
+http
+  .createServer((_req, res) => {
+    res.writeHead(200, {
+      "Content-Type": "text/plain; charset=utf-8",
+    });
+
+    res.end("Bot está rodando!");
+  })
+  .listen(PORT, "0.0.0.0", () => {
+    console.log(`[HTTP] Servidor ativo na porta ${PORT}`);
+  });
+
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+  ],
 });
+
 const arena = new Arena();
+
 globalThis.botClient = client;
 
 client.once(Events.ClientReady, async () => {
-  const guild = await client.guilds.fetch(config.discord.guildId);
-  await arena.ready(guild);
-  console.log(`[MamoBall] ${MODE.label} online como ${client.user?.tag}`);
+  try {
+    const guild = await client.guilds.fetch(
+      config.discord.guildId
+    );
+
+    await arena.ready(guild);
+
+    console.log(
+      `[MamoBall] ${MODE.label} online como ${client.user?.tag}`
+    );
+  } catch (error) {
+    console.error("[ClientReady] Erro ao iniciar:", error);
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    if (interaction.isChatInputCommand()) await handleCommand(interaction, arena);
-    else if (interaction.isButton()) await arena.handleButton(interaction);
+    if (interaction.isChatInputCommand()) {
+      await handleCommand(interaction, arena);
+      return;
+    }
+
+    if (interaction.isButton()) {
+      await arena.handleButton(interaction);
+      return;
+    }
   } catch (error) {
     console.error("[Interaction]", error);
-    const payload = { content: "Falha interna.", ephemeral: true } as const;
+
     if (!interaction.isRepliable()) return;
-    if (interaction.replied || interaction.deferred) await interaction.followUp(payload).catch(() => undefined);
-    else await interaction.reply(payload).catch(() => undefined);
+
+    try {
+      if (interaction.deferred) {
+        await interaction.editReply({
+          content: "Falha interna.",
+        });
+
+        return;
+      }
+
+      if (interaction.replied) {
+        await interaction.followUp({
+          content: "Falha interna.",
+          flags: MessageFlags.Ephemeral,
+        });
+
+        return;
+      }
+
+      await interaction.reply({
+        content: "Falha interna.",
+        flags: MessageFlags.Ephemeral,
+      });
+    } catch (replyError) {
+      console.error(
+        "[Interaction] Falha ao responder:",
+        replyError
+      );
+    }
   }
+});
+
+client.on(Events.Error, (error) => {
+  console.error("[Discord Client]", error);
 });
 
 client.login(config.discord.token).catch((error) => {
